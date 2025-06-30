@@ -16,8 +16,13 @@ import {
   TransportRequestOptions,
   TransportRequestParams
 } from '@elastic/elasticsearch'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'fs'
+import express, { type Request, type Response } from 'express'
+import { createServer, type Server } from 'http'
+import { randomUUID } from 'node:crypto'
 // @ts-expect-error ignore `with` keyword
 import pkg from './package.json' with { type: 'json' }
 
@@ -527,25 +532,180 @@ const config: ElasticsearchConfig = {
   pathPrefix: process.env.ES_PATH_PREFIX
 }
 
-async function main (): Promise<void> {
-  // If we're running in a container (see Dockerfile), future-proof the command-line
-  // by requiring the stdio protocol (http will come later)
-  if (process.env.RUNNING_IN_CONTAINER === "true") {
-    if (process.argv.length != 3 || process.argv[2] !== "stdio" ) {
-      console.log("Missing protocol argument.")
-      console.log("Usage: npm start stdio")
-      process.exit(1)
+// HTTP server and transports management
+let httpServer: Server | null = null
+const transports = {
+  streamable: {} as Record<string, StreamableHTTPServerTransport>,
+  sse: {} as Record<string, SSEServerTransport>,
+}
+
+async function startHttpServer(port: number, host: string, mcpServer: McpServer): Promise<void> {
+  const app = express()
+
+  // Parse JSON requests for the Streamable HTTP endpoint only
+  app.use('/mcp', express.json())
+
+  // Modern Streamable HTTP endpoint
+  app.post('/mcp', async (req: Request, res: Response) => {
+    console.log('Received StreamableHTTP request')
+    const sessionId = req.headers['mcp-session-id'] as string | undefined
+    let transport: StreamableHTTPServerTransport
+
+    if (sessionId && transports.streamable[sessionId]) {
+      // Reuse existing transport
+      console.log('Reusing existing StreamableHTTP transport for sessionId', sessionId)
+      transport = transports.streamable[sessionId]
+    } else if (!sessionId && isInitializeRequest(req.body)) {
+      console.log('New initialization request for StreamableHTTP')
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (sessionId) => {
+          transports.streamable[sessionId] = transport
+        },
+      })
+      transport.onclose = () => {
+        if (transport.sessionId) {
+          delete transports.streamable[transport.sessionId]
+        }
+      }
+      await mcpServer.connect(transport)
+    } else {
+      // Invalid request
+      console.log('Invalid request:', req.body)
+      res.status(400).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32000,
+          message: 'Bad Request: No valid session ID provided',
+        },
+        id: null,
+      })
+      return
+    }
+
+    console.log('Handling StreamableHTTP request')
+    await transport.handleRequest(req, res, req.body)
+    console.log('StreamableHTTP request handled')
+  })
+
+  // Handle GET requests for SSE streams (using built-in support from StreamableHTTP)
+  const handleSessionRequest = async (req: Request, res: Response) => {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined
+    if (!sessionId || !transports.streamable[sessionId]) {
+      res.status(400).send('Invalid or missing session ID')
+      return
+    }
+
+    console.log(`Received session request for session ${sessionId}`)
+
+    try {
+      const transport = transports.streamable[sessionId]
+      await transport.handleRequest(req, res)
+    } catch (error) {
+      console.error('Error handling session request:', error)
+      if (!res.headersSent) {
+        res.status(500).send('Error processing session request')
+      }
     }
   }
 
-  const transport = new StdioServerTransport()
-  const server = await createElasticsearchMcpServer(config)
+  // Handle GET requests for server-to-client notifications via SSE
+  app.get('/mcp', handleSessionRequest)
 
-  await server.connect(transport)
+  // Handle DELETE requests for session termination
+  app.delete('/mcp', handleSessionRequest)
 
-  process.on('SIGINT', () => {
-    server.close().finally(() => process.exit(0))
+  // Legacy SSE endpoint
+  app.get('/sse', async (req: Request, res: Response) => {
+    console.log('Establishing new SSE connection')
+    const transport = new SSEServerTransport('/messages', res)
+    console.log(`New SSE connection established for sessionId ${transport.sessionId}`)
+
+    transports.sse[transport.sessionId] = transport
+    res.on('close', () => {
+      delete transports.sse[transport.sessionId]
+    })
+
+    await mcpServer.connect(transport)
   })
+
+  app.post('/messages', async (req: Request, res: Response) => {
+    const sessionId = req.query.sessionId as string
+    const transport = transports.sse[sessionId]
+    if (transport) {
+      console.log(`Received SSE message for sessionId ${sessionId}`)
+      await transport.handlePostMessage(req, res)
+    } else {
+      res.status(400).send(`No transport found for sessionId ${sessionId}`)
+      return
+    }
+  })
+
+  httpServer = app.listen(port, host, () => {
+    console.log(`HTTP server listening on port ${port}`)
+    console.log(`SSE endpoint available at http://${host}:${port}/sse`)
+    console.log(`Message endpoint available at http://${host}:${port}/messages`)
+    console.log(`StreamableHTTP endpoint available at http://${host}:${port}/mcp`)
+  })
+
+  process.on('SIGINT', async () => {
+    console.log('Shutting down server...')
+    await closeTransports(transports.sse)
+    await closeTransports(transports.streamable)
+    console.log('Server shutdown complete')
+    process.exit(0)
+  })
+
+  process.on('SIGTERM', async () => {
+    console.log('Shutting down server...')
+    await closeTransports(transports.sse)
+    await closeTransports(transports.streamable)
+    console.log('Server shutdown complete')
+    process.exit(0)
+  })
+}
+
+async function closeTransports(
+  transports: Record<string, SSEServerTransport | StreamableHTTPServerTransport>,
+) {
+  for (const sessionId in transports) {
+    try {
+      await transports[sessionId]?.close()
+      delete transports[sessionId]
+    } catch (error) {
+      console.error(`Error closing transport for session ${sessionId}:`, error)
+    }
+  }
+}
+
+export async function stopHttpServer(): Promise<void> {
+  if (!httpServer) {
+    throw new Error("HTTP server is not running")
+  }
+
+  return new Promise((resolve, reject) => {
+    httpServer!.close((err: Error | undefined) => {
+      if (err) {
+        reject(err)
+        return
+      }
+      httpServer = null
+      const closing = Object.values(transports.sse).map((transport) => {
+        return transport.close()
+      })
+      Promise.all(closing).then(() => {
+        resolve()
+      })
+    })
+  })
+}
+
+async function main (): Promise<void> {
+  console.log('Starting MCP server with HTTP transports (SSE + StreamableHTTP)...')
+  const port = parseInt(process.env.PORT || '3000', 10)
+  const host = process.env.HOST || '127.0.0.1'
+  const mcpServer = await createElasticsearchMcpServer(config)
+  await startHttpServer(port, host, mcpServer)
 }
 
 main().catch((error) => {

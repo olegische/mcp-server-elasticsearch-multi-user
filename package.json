@@ -1,7 +1,7 @@
 {
   "name": "@elastic/mcp-server-elasticsearch",
   "description": "Elasticsearch MCP Server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "Apache-2.0",
   "author": "Elastic",
   "type": "module",
@@ -44,12 +44,14 @@
     "@arizeai/openinference-instrumentation-mcp": "^0.2.0",
     "@elastic/elasticsearch": "^9.0.0",
     "@elastic/opentelemetry-node": "^1.1.1",
-    "@modelcontextprotocol/sdk": "1.12.1"
+    "@modelcontextprotocol/sdk": "1.12.1",
+    "express": "^5.1.0"
   },
   "engines": {
     "node": ">=18"
   },
   "devDependencies": {
+    "@types/express": "^5.0.3",
     "@types/node": "22.15.32",
     "license-checker": "25.0.1",
     "ts-standard": "12.0.2",

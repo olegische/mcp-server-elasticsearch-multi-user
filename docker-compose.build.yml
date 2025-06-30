@@ -1,0 +1,11 @@
+services:
+  mcp-server-elasticsearch-multi-user:
+    image: ghcr.io/${REGISTRY_ID}/${PROJECT_NAME}:${VERSION}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+      tags:
+        - ghcr.io/${REGISTRY_ID}/${PROJECT_NAME}:${VERSION}
+        - ghcr.io/${REGISTRY_ID}/${PROJECT_NAME}:latest

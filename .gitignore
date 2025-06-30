@@ -4,3 +4,4 @@ yarn.lock
 .env
 .idea
 .vscode
+secrets/

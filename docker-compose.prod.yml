@@ -1,0 +1,13 @@
+services:
+  mcp-server-elasticsearch-multi-user:
+    image: ghcr.io/olegische/prometheus-mcp-multi-user:latest
+    container_name: prometheus-mcp-multi-user
+    platform: linux/amd64
+    ports:
+      - "8662:6662"
+    environment:
+      - PORT=8662
+      - HOST=0.0.0.0
+    restart: unless-stopped
+    volumes:
+      - ${HOME}/.prometheus-mcp-multi-user:/home/app/.prometheus-mcp-multi-user
