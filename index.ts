@@ -122,63 +122,6 @@ type ElasticsearchConfig = z.infer<typeof ConfigSchema>
 
 export async function createElasticsearchMcpServer (config: ElasticsearchConfig): Promise<McpServer> {
   const validatedConfig = ConfigSchema.parse(config)
-  const { url, apiKey, username, password, caCert, version, pathPrefix, sslSkipVerify } = validatedConfig
-
-  const clientOptions: ClientOptions = {
-    node: url,
-    headers: {
-      'user-agent': `${product.name}/${product.version}`
-    }
-  }
-
-  if (pathPrefix != null) {
-    const verifiedPathPrefix = pathPrefix
-    clientOptions.Transport = class extends CustomTransport {
-      constructor (opts: ConstructorParameters<typeof Transport>[0]) {
-        super(opts, verifiedPathPrefix)
-      }
-    }
-  }
-
-  // Set up authentication
-  if (apiKey != null) {
-    clientOptions.auth = { apiKey }
-  } else if (username != null && password != null) {
-    clientOptions.auth = { username, password }
-  }
-
-  // Set up SSL/TLS certificate if provided
-  clientOptions.tls = {}
-  if (caCert != null && caCert.length > 0) {
-    try {
-      const ca = fs.readFileSync(caCert)
-      clientOptions.tls.ca = ca
-    } catch (error) {
-      console.error(
-        `Failed to read certificate file: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      )
-    }
-  }
-
-  // Add version-specific configuration
-  if (version === '8') {
-    clientOptions.maxRetries = 5
-    clientOptions.requestTimeout = 30000
-    clientOptions.headers = {
-      accept: 'application/vnd.elasticsearch+json;compatible-with=8',
-      'content-type': 'application/vnd.elasticsearch+json;compatible-with=8'
-    }
-  }
-
-  // Skip verification if requested
-  if (sslSkipVerify != null && sslSkipVerify === true) {
-    clientOptions.tls.rejectUnauthorized = false
-  }
-
-  const esClient = new Client(clientOptions)
-
   const server = new McpServer(product)
 
   // Tool 1: List indices
@@ -194,12 +137,13 @@ export async function createElasticsearchMcpServer (config: ElasticsearchConfig)
     },
     async ({ indexPattern }) => {
       try {
+        const esClient = createEsClientForRequest(validatedConfig, currentRequestHeaders)
         const response = await esClient.cat.indices({
           index: indexPattern,
           format: 'json'
         })
 
-        const indicesInfo = response.map((index) => ({
+        const indicesInfo = response.map((index: any) => ({
           index: index.index,
           health: index.health,
           status: index.status,
@@ -251,6 +195,7 @@ export async function createElasticsearchMcpServer (config: ElasticsearchConfig)
     },
     async ({ index }) => {
       try {
+        const esClient = createEsClientForRequest(validatedConfig, currentRequestHeaders)
         const mappingResponse = await esClient.indices.getMapping({
           index
         })
@@ -335,6 +280,8 @@ export async function createElasticsearchMcpServer (config: ElasticsearchConfig)
     },
     async ({ index, queryBody, profile, explain }) => {
       try {
+        const esClient = createEsClientForRequest(validatedConfig, currentRequestHeaders)
+        
         // Get mappings to identify text fields for highlighting
         const mappingResponse = await esClient.indices.getMapping({
           index
@@ -356,7 +303,7 @@ export async function createElasticsearchMcpServer (config: ElasticsearchConfig)
           for (const [fieldName, fieldData] of Object.entries(
             indexMappings.properties
           )) {
-            if (fieldData.type === 'text' || 'dense_vector' in fieldData) {
+            if ((fieldData as any).type === 'text' || 'dense_vector' in (fieldData as any)) {
               textFields[fieldName] = {}
             }
           }
@@ -373,14 +320,14 @@ export async function createElasticsearchMcpServer (config: ElasticsearchConfig)
         // Extract the 'from' parameter from queryBody, defaulting to 0 if not provided
         const from: string | number = queryBody.from ?? 0
 
-        const contentFragments = result.hits.hits.map((hit) => {
+        const contentFragments = result.hits.hits.map((hit: any) => {
           const highlightedFields = hit.highlight ?? {}
           const sourceData = hit._source ?? {}
 
           let content = ''
 
           for (const [field, highlights] of Object.entries(highlightedFields)) {
-            if (highlights != null && highlights.length > 0) {
+            if (highlights != null && Array.isArray(highlights) && highlights.length > 0) {
               content += `${field} (highlighted): ${highlights.join(
                 ' ... '
               )}\n`
@@ -466,12 +413,13 @@ export async function createElasticsearchMcpServer (config: ElasticsearchConfig)
     },
     async ({ index }) => {
       try {
+        const esClient = createEsClientForRequest(validatedConfig, currentRequestHeaders)
         const response = await esClient.cat.shards({
           index,
           format: 'json'
         })
 
-        const shardsInfo = response.map((shard) => ({
+        const shardsInfo = response.map((shard: any) => ({
           index: shard.index,
           shard: shard.shard,
           prirep: shard.prirep,
@@ -539,8 +487,121 @@ const transports = {
   sse: {} as Record<string, SSEServerTransport>,
 }
 
+// Global variable to store current request headers for tool context
+// This is a temporary solution until we have proper transport middleware
+let currentRequestHeaders: Record<string, string | string[] | undefined> = {}
+
+/**
+ * Creates an Elasticsearch client for the current request, merging headers with base config.
+ * Headers take priority over environment variables.
+ */
+function createEsClientForRequest(baseConfig: ElasticsearchConfig, headers?: Record<string, string | string[] | undefined>): Client {
+  // Create a merged config with headers taking priority
+  const mergedConfig = { ...baseConfig }
+  
+  if (headers) {
+    // Override config with header values if present
+    if (headers['x-es-url']) {
+      mergedConfig.url = headers['x-es-url'] as string
+    }
+    if (headers['x-es-api-key']) {
+      mergedConfig.apiKey = headers['x-es-api-key'] as string
+      // Clear username/password if API key is provided
+      mergedConfig.username = undefined
+      mergedConfig.password = undefined
+    } else {
+      // Only use username/password from headers if no API key
+      if (headers['x-es-username']) {
+        mergedConfig.username = headers['x-es-username'] as string
+      }
+      if (headers['x-es-password']) {
+        mergedConfig.password = headers['x-es-password'] as string
+      }
+    }
+    if (headers['x-es-ca-cert']) {
+      mergedConfig.caCert = headers['x-es-ca-cert'] as string
+    }
+    if (headers['x-es-version']) {
+      mergedConfig.version = headers['x-es-version'] as string
+    }
+    if (headers['x-es-ssl-skip-verify']) {
+      mergedConfig.sslSkipVerify = headers['x-es-ssl-skip-verify'] === 'true' || headers['x-es-ssl-skip-verify'] === '1'
+    }
+    if (headers['x-es-path-prefix']) {
+      mergedConfig.pathPrefix = headers['x-es-path-prefix'] as string
+    }
+  }
+
+  // Validate the merged config
+  const validatedConfig = ConfigSchema.parse(mergedConfig)
+  const { url, apiKey, username, password, caCert, version, pathPrefix, sslSkipVerify } = validatedConfig
+
+  const clientOptions: ClientOptions = {
+    node: url,
+    headers: {
+      'user-agent': `${product.name}/${product.version}`
+    }
+  }
+
+  if (pathPrefix != null) {
+    const verifiedPathPrefix = pathPrefix
+    clientOptions.Transport = class extends CustomTransport {
+      constructor (opts: ConstructorParameters<typeof Transport>[0]) {
+        super(opts, verifiedPathPrefix)
+      }
+    }
+  }
+
+  // Set up authentication
+  if (apiKey != null) {
+    clientOptions.auth = { apiKey }
+  } else if (username != null && password != null) {
+    clientOptions.auth = { username, password }
+  }
+
+  // Set up SSL/TLS certificate if provided
+  clientOptions.tls = {}
+  if (caCert != null && caCert.length > 0) {
+    try {
+      const ca = fs.readFileSync(caCert)
+      clientOptions.tls.ca = ca
+    } catch (error) {
+      console.error(
+        `Failed to read certificate file: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+    }
+  }
+
+  // Add version-specific configuration
+  if (version === '8') {
+    clientOptions.maxRetries = 5
+    clientOptions.requestTimeout = 30000
+    clientOptions.headers = {
+      accept: 'application/vnd.elasticsearch+json;compatible-with=8',
+      'content-type': 'application/vnd.elasticsearch+json;compatible-with=8'
+    }
+  }
+
+  // Skip verification if requested
+  if (sslSkipVerify != null && sslSkipVerify === true) {
+    clientOptions.tls.rejectUnauthorized = false
+  }
+
+  return new Client(clientOptions)
+}
+
 async function startHttpServer(port: number, host: string, mcpServer: McpServer): Promise<void> {
   const app = express()
+
+  // Middleware to capture headers for tool context
+  app.use((req: Request, res: Response, next) => {
+    // Store headers in global variable for current request
+    // This is a temporary solution until we have proper transport middleware
+    currentRequestHeaders = req.headers
+    next()
+  })
 
   // Parse JSON requests for the Streamable HTTP endpoint only
   app.use('/mcp', express.json())
