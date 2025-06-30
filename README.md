@@ -6,6 +6,16 @@ Connect to your Elasticsearch data directly from any MCP Client (like Claude Des
 
 This server connects agents to your Elasticsearch data using the Model Context Protocol. It allows you to interact with your Elasticsearch indices through natural language conversations.
 
+## 🚀 Multi-User Support
+
+This server now supports **multi-user functionality** through HTTP headers! Each request can specify its own Elasticsearch credentials, allowing different users to connect to different clusters or use different authentication methods.
+
+**Key Features:**
+- **Header-based configuration**: Override any Elasticsearch setting per request
+- **Priority system**: Headers take priority over environment variables
+- **Per-request isolation**: Each tool call gets its own Elasticsearch client
+- **Multiple transport support**: HTTP (SSE + StreamableHTTP) and stdio transports
+
 <a href="https://glama.ai/mcp/servers/@elastic/mcp-server-elasticsearch">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@elastic/mcp-server-elasticsearch/badge" alt="Elasticsearch Server MCP server" />
 </a>
@@ -29,6 +39,60 @@ This server connects agents to your Elasticsearch data using the Model Context P
 <https://github.com/user-attachments/assets/5dd292e1-a728-4ca7-8f01-1380d1bebe0c>
 
 ## Installation & Setup
+
+### HTTP Server Mode (Multi-User Support)
+
+The server now runs as an HTTP server with multiple transport support, enabling multi-user functionality:
+
+1. **Start the HTTP Server**
+
+   ```bash
+   # Set base configuration via environment variables
+   export ES_URL="https://your-cluster.es.io:9243"
+   export ES_API_KEY="your-default-api-key"
+   export PORT=3000
+   export HOST=127.0.0.1
+   
+   # Start the server
+   npm start
+   ```
+
+2. **Available Endpoints**
+   - **StreamableHTTP**: `POST http://localhost:3000/mcp` (recommended)
+   - **SSE (Legacy)**: `GET http://localhost:3000/sse` + `POST http://localhost:3000/messages`
+
+3. **Multi-User Headers**
+
+   Each request can override Elasticsearch configuration using headers:
+
+   | Header | Description | Example |
+   |--------|-------------|---------|
+   | `x-es-url` | Elasticsearch cluster URL | `https://my-cluster.es.io:9243` |
+   | `x-es-api-key` | API key for authentication | `VnVhQ2ZHY0JDZGJrU...` |
+   | `x-es-username` | Username for basic auth | `elastic` |
+   | `x-es-password` | Password for basic auth | `changeme` |
+   | `x-es-ca-cert` | Path to CA certificate file | `/path/to/ca.crt` |
+   | `x-es-version` | Elasticsearch version (8 or 9) | `8` |
+   | `x-es-ssl-skip-verify` | Skip SSL verification | `true` |
+   | `x-es-path-prefix` | Path prefix for requests | `/elasticsearch` |
+
+4. **Example Multi-User Request**
+
+   ```bash
+   curl -X POST http://localhost:3000/mcp \
+     -H "Content-Type: application/json" \
+     -H "x-es-url: https://user1-cluster.es.io:9243" \
+     -H "x-es-api-key: user1-api-key" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 1,
+       "method": "tools/call",
+       "params": {
+         "name": "list_indices",
+         "arguments": {"indexPattern": "*"}
+       }
+     }'
+   ```
 
 ### Using Docker
 
@@ -233,10 +297,23 @@ This project is licensed under the Apache License 2.0.
 
 ## Troubleshooting
 
+### General Issues
 * Ensure your MCP configuration is correct.
 * Verify that your Elasticsearch URL is accessible from your machine.
 * Check that your authentication credentials (API key or username/password) have the necessary permissions.
 * If using SSL/TLS with a custom CA, verify that the certificate path is correct and the file is readable.
 * Look at the terminal output for error messages.
+
+### Multi-User Mode Issues
+* **Headers not working**: Ensure you're using the HTTP server mode (`npm start`) and not stdio mode
+* **Authentication failures**: Check that `x-es-api-key` or both `x-es-username` and `x-es-password` headers are correctly set
+* **Connection issues**: Verify that the `x-es-url` header points to an accessible Elasticsearch cluster
+* **SSL/TLS issues**: Use `x-es-ssl-skip-verify: true` for testing, or provide proper CA certificate via `x-es-ca-cert`
+* **Priority conflicts**: Remember that headers override environment variables - check both sources
+
+### HTTP Server Mode
+* **Port conflicts**: Change the `PORT` environment variable if port 3000 is already in use
+* **CORS issues**: The server accepts requests from any origin in development mode
+* **Transport selection**: Use StreamableHTTP (`POST /mcp`) for better performance over SSE
 
 If you encounter issues, feel free to open an issue on the GitHub repository.
