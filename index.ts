@@ -54,14 +54,12 @@ class CustomTransport extends Transport {
   }
 }
 
-// Configuration schema with auth options
+// Configuration schema with auth options - relaxed for multi-user support
 const ConfigSchema = z
   .object({
     url: z
       .string()
-      .trim()
-      .min(1, 'Elasticsearch URL cannot be empty')
-      .url('Invalid Elasticsearch URL format')
+      .optional()
       .describe('Elasticsearch server URL'),
 
     apiKey: z
@@ -98,25 +96,7 @@ const ConfigSchema = z
       .describe('Skip SSL certificate verification'),
 
   })
-  .refine(
-    (data) => {
-      // If apiKey is provided, it's valid
-      if (data.apiKey != null) return true
-
-      // If username is provided, password must be provided
-      if (data.username != null) {
-        return data.password != null
-      }
-
-      // No auth is also valid (for local development)
-      return true
-    },
-    {
-      message:
-        'Either ES_API_KEY or both ES_USERNAME and ES_PASSWORD must be provided, or no auth for local development',
-      path: ['username', 'password']
-    }
-  )
+  // No validation required at startup - credentials can come from headers
 
 type ElasticsearchConfig = z.infer<typeof ConfigSchema>
 
@@ -535,6 +515,11 @@ function createEsClientForRequest(baseConfig: ElasticsearchConfig, headers?: Rec
   // Validate the merged config
   const validatedConfig = ConfigSchema.parse(mergedConfig)
   const { url, apiKey, username, password, caCert, version, pathPrefix, sslSkipVerify } = validatedConfig
+
+  // URL is required for client creation
+  if (!url || url.trim() === '') {
+    throw new Error('Elasticsearch URL is required. Provide it via ES_URL environment variable or x-es-url header.')
+  }
 
   const clientOptions: ClientOptions = {
     node: url,

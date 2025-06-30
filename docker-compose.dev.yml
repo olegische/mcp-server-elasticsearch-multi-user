@@ -10,7 +10,7 @@ services:
     environment:
       - PORT=8664
       - HOST=0.0.0.0
-      - ES_URL=http://your-elasticsearch-url
+      - ES_URL=http://localhost:9200
       - ES_API_KEY=your-api-key
     restart: unless-stopped
     volumes:
