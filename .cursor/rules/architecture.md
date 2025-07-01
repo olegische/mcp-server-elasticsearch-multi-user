@@ -34,18 +34,24 @@ The `TRANSPORT` environment variable is the divine selector of transport mechani
 
 **NO MORE HARDCODED TRANSPORT BULLSHIT.** The transport manager factory creates the appropriate implementation based on this sacred variable.
 
-## III. THE THIRD COMMANDMENT: REQUEST CONTEXT IS PASSED EXPLICITLY
+## III. THE THIRD COMMANDMENT: REQUEST CONTEXT IS SACRED AND SCOPED
 
-We have eliminated the global state cancer. Every tool receives a `RequestContext` that contains:
+We have eliminated the global state cancer. But for transports like SSE, where a connection is established with one request (`GET /sse`) and messages are sent with another (`POST /messages`), simple context passing is not enough. This is a classic state-over-stateless problem, and the only sane solution is `AsyncLocalStorage`.
+
+**`AsyncLocalStorage` is the one true way.** It creates a request-specific context that persists across the entire asynchronous call chain of that request, without polluting globals or using broken instance properties on singletons.
+
+The `RequestContext` is created at the transport boundary and stored:
 
 ```typescript
-interface RequestContext {
-  headers: Record<string, string | string[] | undefined>
-  sessionId?: string
-}
+// In the SSE /messages handler
+await requestContextStorage.run(context, async () => {
+  await transport.handlePostMessage(req, res)
+})
 ```
 
-This context is extracted from HTTP requests and passed down through the call chain. **NO GLOBAL VARIABLES. NO SHARED STATE. NO RACE CONDITIONS.**
+This context is then available anywhere downstream via `requestContextStorage.getStore()`.
+
+**NO GLOBAL VARIABLES. NO SHARED INSTANCE STATE. NO FUCKING RACE CONDITIONS.**
 
 ## IV. THE FOURTH COMMANDMENT: ELASTICSEARCH CLIENT FACTORY IS CONTEXT-AWARE
 
@@ -105,7 +111,7 @@ this.mcpServer.tool(
   async ({ indexPattern }) => {
     return await this.elasticsearchTools.listIndices(
       { indexPattern },
-      this.currentRequestContext
+      getCurrentContext() // This now safely gets context from AsyncLocalStorage
     )
   }
 )
