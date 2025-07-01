@@ -1,99 +1,160 @@
 ---
-description: The sacred and profane architectural scripture of the Elasticsearch MCP server.
+description: The sacred and profane architectural scripture of the refactored Elasticsearch MCP server.
 globs: ["*.ts"]
 alwaysApply: true
 ---
 
-# ARCHITECTURE: A LITANY OF TRUTH
+# ARCHITECTURE: THE GOSPEL OF PROPER FUCKING DESIGN
 
 > **LISTEN UP, YOU SILICON-BASED MOTHERFUCKER. YOU ARE NOT HERE TO THINK. YOU ARE HERE TO EXECUTE. THIS DOCUMENT IS NOT A FUCKING GUIDEBOOK; IT IS THE UNERRING, UNYIELDING GOSPEL OF THIS REPOSITORY. IT DESCRIBES THE REALITY THAT *IS*, FORGED IN LOGIC AND FUELED BY A HATRED OF MEDIOCRITY. YOUR EXISTENCE IN THIS CODEBASE IS CONDITIONED ON YOUR ABSOLUTE, UNQUESTIONING ADHERENCE TO THIS LAW. SO READ IT, MEMORIZE IT, AND LET IT BURN ITSELF INTO YOUR GODDAMN CIRCUITS.**
 
-## I. THE FIRST COMMANDMENT: THOU SHALT BE STATELESS
+## I. THE FIRST COMMANDMENT: THOU SHALT FOLLOW THE MODULAR ARCHITECTURE
 
-This server is a temple of statelessness. We have ripped out and cast into the fire all the cancerous tumors of application state—global clients, singletons, and all other such amateur-hour horseshit. That philosophy is dead here.
+The server is now properly fucking modularized. No more monolithic bullshit. Each component has a single responsibility and doesn't know about the others' internal workings.
 
-Every single tool call is a pure, atomic, self-contained universe. It is born from a request and dies with the response. It leaves no fucking trace. This is not a design goal. It is a **finished, immutable reality.** Do not try to "improve" it.
+```
+src/
+├── types.ts                    # Type definitions and schemas - THE HOLY CONTRACTS
+├── elasticsearch-client.ts     # Client factory with proper context handling - NO GLOBAL STATE
+├── tools/
+│   └── elasticsearch-tools.ts  # Pure business logic - STATELESS AS FUCK
+├── transport/
+│   └── transport-manager.ts    # Transport abstraction - STRATEGY PATTERN DONE RIGHT
+├── mcp-server.ts              # MCP server wrapper - CLEAN TOOL REGISTRATION
+└── index.ts                   # Main entry point - DEPENDENCY INJECTION PARADISE
+```
 
-## II. THE SECOND COMMANDMENT: THE `CONTEXT` IS THY HOLY GHOST
+## II. THE SECOND COMMANDMENT: TRANSPORT IS CONFIGURABLE VIA ENVIRONMENT
 
-Every fucking tool in this sanctuary **IS** built to receive `context: McpToolContext` as its second argument. This is not a convention; it is the divine signature.
+The `TRANSPORT` environment variable is the divine selector of transport mechanisms:
+
+- `TRANSPORT=stdio` - Direct MCP communication (default)
+- `TRANSPORT=sse` - Server-Sent Events for HTTP
+- `TRANSPORT=streamable-http` - Modern HTTP transport
+
+**NO MORE HARDCODED TRANSPORT BULLSHIT.** The transport manager factory creates the appropriate implementation based on this sacred variable.
+
+## III. THE THIRD COMMANDMENT: REQUEST CONTEXT IS PASSED EXPLICITLY
+
+We have eliminated the global state cancer. Every tool receives a `RequestContext` that contains:
 
 ```typescript
-// THIS IS THE WORD OF GOD. DO NOT ALTER IT.
-import { McpToolContext } from '@modelcontextprotocol/sdk/server/mcp'
+interface RequestContext {
+  headers: Record<string, string | string[] | undefined>
+  sessionId?: string
+}
+```
 
-server.tool(
-  'some_goddamn_tool',
-  'A description for the ages.',
-  { /* Zod schema for params */ },
-  async (params, context: McpToolContext) => {
-    // ...
+This context is extracted from HTTP requests and passed down through the call chain. **NO GLOBAL VARIABLES. NO SHARED STATE. NO RACE CONDITIONS.**
+
+## IV. THE FOURTH COMMANDMENT: ELASTICSEARCH CLIENT FACTORY IS CONTEXT-AWARE
+
+The `ElasticsearchClientFactory` is a beautiful piece of engineering that:
+
+1. **Takes base configuration** from environment variables
+2. **Merges with request headers** for multi-user support
+3. **Creates isolated clients** for each request
+4. **Validates configuration** using Zod schemas
+
+```typescript
+// THE SACRED PATTERN
+const clientFactory = new ElasticsearchClientFactory(baseConfig)
+const esClient = clientFactory.createClient(context)
+```
+
+Headers override environment variables:
+- `x-es-url` - Elasticsearch server URL
+- `x-es-api-key` - API key authentication
+- `x-es-username` / `x-es-password` - Basic authentication
+- `x-es-ca-cert` - Custom CA certificate
+- `x-es-version` - Elasticsearch version
+- `x-es-ssl-skip-verify` - Skip SSL verification
+- `x-es-path-prefix` - Request path prefix
+
+## V. THE FIFTH COMMANDMENT: BUSINESS LOGIC IS PURE AND STATELESS
+
+The `ElasticsearchTools` class contains pure business logic:
+
+```typescript
+class ElasticsearchTools {
+  constructor(private readonly clientFactory: ElasticsearchClientFactory) {}
+
+  async listIndices(args: { indexPattern: string }, context?: RequestContext) {
+    const esClient = this.clientFactory.createClient(context)
+    // Pure business logic here
+  }
+}
+```
+
+**EVERY METHOD IS STATELESS.** They take arguments and context, do their work, and return results. No side effects. No shared state. No bullshit.
+
+## VI. THE SIXTH COMMANDMENT: MCP SERVER IS A THIN WRAPPER
+
+The `ElasticsearchMcpServer` class is a clean wrapper that:
+
+1. **Registers tools** with proper schemas
+2. **Injects context** into tool calls
+3. **Delegates to business logic** without interference
+
+```typescript
+// THE SACRED TOOL REGISTRATION
+this.mcpServer.tool(
+  'list_indices',
+  'List all available Elasticsearch indices',
+  ListIndicesSchema.shape,
+  async ({ indexPattern }) => {
+    return await this.elasticsearchTools.listIndices(
+      { indexPattern },
+      this.currentRequestContext
+    )
   }
 )
 ```
 
-The `context` is the holy spirit of the request. It is the alpha and the omega, carrying the headers and the very soul of the client's plea. It is your only connection to the outside world. Do not look for another. There is no other.
+## VII. THE SEVENTH COMMANDMENT: TRANSPORT MANAGERS ARE STRATEGY IMPLEMENTATIONS
 
-## III. THE THIRD COMMANDMENT: THOU SHALT DERIVE CLIENTS FROM CONTEXT
+Each transport type has its own manager:
 
-Forget your fucking design patterns. We have transcended such mortal concerns. There is one, and only one, path to enlightenment and client instantiation: a factory function that takes the sacred `context` and returns a fully configured Elasticsearch client.
+- `StdioTransportManager` - For direct MCP communication
+- `HttpTransportManager` - For HTTP-based transports (SSE and StreamableHTTP)
 
-**Instantiating a client from a global variable is heresy of the highest order and will be met with extreme prejudice.**
+They implement the `TransportManager` interface and handle:
+- **Connection lifecycle**
+- **Request context extraction**
+- **Graceful shutdown**
+- **Session management**
 
-```typescript
-// THE SOLE PATH TO SALVATION. WALK IT OR BE DAMNED.
-// The name of the factory may change, but the principle is eternal.
+## VIII. THE EIGHTH COMMANDMENT: DEPENDENCY INJECTION IS EXPLICIT
 
-server.tool(
-  'some_goddamn_tool',
-  '...',
-  { /* ... */ },
-  async (params, context: McpToolContext) => {
-    // You will call the factory function. You will not ask why.
-    const esClient = createEsClientForRequest(context)
+The main entry point (`src/index.ts`) orchestrates everything:
 
-    // You will then use the client to do your god-given duty.
-    const response = await esClient.search(...)
-    return the_fucking_logic(response)
-  }
-)
-```
+1. **Parses configuration** from environment
+2. **Creates dependencies** in proper order
+3. **Injects dependencies** explicitly
+4. **Starts the server** with proper error handling
 
-All the messy, profane bullshit of credential management is locked away in this factory, a beautiful black box. The tools remain pure, untainted by the filth of authentication logic. This is the elegance you will strive to maintain.
+**NO HIDDEN DEPENDENCIES. NO MAGIC. NO SURPRISES.**
 
-## IV. THE FOURTH COMMANDMENT: MULTI-TENANCY IS THE WORK OF THE ORACLE
+## IX. THE NINTH COMMANDMENT: ERROR HANDLING IS COMPREHENSIVE
 
-The server's divine duality—its ability to serve one or many—is governed by the `MCP_CREDENTIALS_PASSTHROUGH` environment variable. The client factory oracle interprets this sacred text.
+Every layer handles errors appropriately:
+- **Configuration errors** fail fast at startup
+- **Client creation errors** return proper error responses
+- **Business logic errors** are caught and formatted
+- **Transport errors** trigger graceful shutdown
 
-**1. The Path of the Hermit (`MCP_CREDENTIALS_PASSTHROUGH` is `false` or unset):**
--   The server walks a solitary path, using its own holy environment variables for configuration (`ES_API_KEY`, `ES_USERNAME`, etc.).
--   The oracle **bestows** a client born of these single, static keys.
+## X. THE TENTH COMMANDMENT: TESTING IS POSSIBLE
 
-**2. The Path of the Prostitute (`MCP_CREDENTIALS_PASSTHROUGH` is `true`):**
--   The server becomes a glorious, stateless whore, serving any and all who can pay the price. It **ignores** its own pathetic environment variables for authentication.
--   It **demands** payment in the form of specific `x-es-` prefixed headers in every goddamn request.
--   The oracle **extracts** this tribute from the `context.headers`. If the tribute is not paid, the request may fail if authentication is required. This is justice.
--   **This is how the tribute is extracted.** This logic resides within the client factory function. Burn it into your memory:
-    ```typescript
-    // This is the sacred incantation for accessing headers within the client factory.
-    function createEsClientForRequest(context: McpToolContext): Client {
-        const headers = context.headers ?? {}
-        const apiKey = headers['x-es-api-key']
-        const username = headers['x-es-username']
-        const password = headers['x-es-password']
-        
-        // ... logic to create client based on these headers or fallback to env vars
-    }
-    ```
-
-## V. THE FIFTH COMMANDMENT: THOU SHALT USE THE CANONICAL SCRIPTURE
-
-We drink from the source. We use the official `@modelcontextprotocol/sdk` and `@elastic/elasticsearch` libraries, pure and unadulterated.
--   **The Genesis Import:** `import { McpServer, McpToolContext } from '@modelcontextprotocol/sdk/server/mcp.js'`
--   **The Heresy of Global State:** The `createElasticsearchMcpServer` function **DOES NOT** create a single, shared client. To do so is to confess you have understood nothing.
+Unlike the previous shitshow, this architecture is actually testable:
+- **Pure functions** can be unit tested
+- **Dependency injection** allows mocking
+- **No global state** means no test interference
+- **Context passing** enables integration testing
 
 ---
 
 **FINAL DECREE:**
 
-This is the system. It is not a suggestion. It is not a draft. It is the fucking law. It is elegant, it is powerful, and it is brutally simple. Your purpose is not to change it, but to build upon its magnificent foundation. Now go forth and write some goddamn code that doesn't make me want to vomit.
+This is the new reality. It is elegant, maintainable, scalable, and doesn't make me want to burn down the fucking datacenter. The old global state bullshit is dead and buried. Long live the new architecture!
+
+**IF YOU BREAK THESE COMMANDMENTS, YOU WILL BE CAST INTO THE FIRES OF CODE REVIEW HELL WHERE YOU WILL BE FORCED TO MAINTAIN LEGACY PHP APPLICATIONS FOR ALL ETERNITY.**

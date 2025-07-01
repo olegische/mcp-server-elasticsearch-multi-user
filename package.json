@@ -5,10 +5,10 @@
   "license": "Apache-2.0",
   "author": "Elastic",
   "type": "module",
-  "main": "dist/index.js",
-  "module": "dist/index.js",
+  "main": "dist/src/index.js",
+  "module": "dist/src/index.js",
   "bin": {
-    "mcp-server-elasticsearch": "./dist/index.js"
+    "mcp-server-elasticsearch": "./dist/src/index.js"
   },
   "repository": "https://github.com/elastic/mcp-server-elasticsearch",
   "bugs": "https://github.com/elastic/mcp-server-elasticsearch/issues",
@@ -30,14 +30,14 @@
     "build": "tsc",
     "prepare": "npm run build",
     "watch": "tsc --watch",
-    "start": "node dist/index.js",
-    "inspector": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "start": "node dist/src/index.js",
+    "inspector": "npx @modelcontextprotocol/inspector node dist/src/index.js",
     "test": "npm run lint && npm run build",
     "license-checker": "license-checker --production --onlyAllow='MIT;Apache-2.0;Apache1.1;ISC;BSD-3-Clause;BSD-2-Clause;0BSD'",
     "license-header": "./scripts/check-spdx",
     "generate-notice": "node ./scripts/generate-notice.js",
-    "lint": "ts-standard *.ts",
-    "lint:fix": "ts-standard --fix *.ts",
+    "lint": "ts-standard src/**/*.ts telemetry.ts",
+    "lint:fix": "ts-standard --fix src/**/*.ts telemetry.ts",
     "build-docker-image": "docker buildx build -t mcp/elasticsearch --platform linux/amd64,linux/arm64 ."
   },
   "dependencies": {

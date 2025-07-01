@@ -4,10 +4,17 @@
 
 # Entrypoint of the Docker image.
 
+# Set transport type based on first argument or TRANSPORT env var
+if [ -n "$1" ]; then
+  export TRANSPORT="$1"
+elif [ -z "$TRANSPORT" ]; then
+  export TRANSPORT="stdio"
+fi
+
 # The OTel SDK logs on stdout and pollutes the communication with the client in stdio mode.
 # We cannot just disable it in the TS code as the first log statement is output when importing
 # the OTel SDK module.
-if [ "$1" = "stdio" ]
+if [ "$TRANSPORT" = "stdio" ]
 then
   export OTEL_LOG_LEVEL=none
 fi
@@ -20,4 +27,6 @@ then
   export OTEL_SDK_DISABLED="true"
 fi
 
-exec node dist/index.js "$@"
+echo "Starting Elasticsearch MCP Server with transport: $TRANSPORT"
+
+exec node dist/src/index.js

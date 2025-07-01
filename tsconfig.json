@@ -13,7 +13,8 @@
     "resolveJsonModule": true
   },
   "include": [
-    "*.ts"
+    "src/**/*.ts",
+    "telemetry.ts"
   ],
   "exclude": [
     "node_modules",

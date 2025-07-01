@@ -8,6 +8,7 @@ services:
     # env_file:
       # - ./.env
     environment:
+      - TRANSPORT=sse
       - PORT=8664
       - HOST=0.0.0.0
       - ES_URL=http://localhost:9200
